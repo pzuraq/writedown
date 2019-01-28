@@ -1,0 +1,19 @@
+{
+  "name": "writedown",
+  "version": "0.0.0",
+  "description": "What You See Is Markdown style editor",
+  "main": "dist/index.js",
+  "repository": "https://github.com/pzuraq/writedown",
+  "author": "Chris Garrett",
+  "license": "MIT",
+  "private": false,
+  "scripts": {
+    "start": "parcel ./tests/demo/index.html"
+  },
+  "devDependencies": {
+    "parcel": "^1.11.0",
+    "prettier": "^1.16.1",
+    "testem": "^2.14.0",
+    "typescript": "^3.2.4"
+  }
+}
