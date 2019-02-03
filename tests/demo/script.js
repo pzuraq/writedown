@@ -468,5 +468,14 @@ Bear has three main columns where you create, edit, and organize your notes.
 document.addEventListener('keydown', ({ key }) => {
   TEXT += key;
 
+  // console.log(TEXT);
   console.log(tokenize(TEXT));
+  // console.log(parse(TEXT));
 });
+
+window.onmessage = () => {
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }))
+  document.body.style.background = "#F00";
+}
+
+window.postMessage('foo');

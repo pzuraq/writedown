@@ -17,6 +17,7 @@ type MarkupTypeMap = {
 export const enum OpCode {
   OPEN = TokenType._LAST,
   CLOSE,
+  VALUE,
   APPEND,
 }
 
@@ -155,9 +156,21 @@ function processMarkupTokens(tokens: Array<TokenType | number>) {
       let type = CLOSE_MARKUP_TOKENS[tokenType];
 
       if (Array.isArray(type)) {
-        type.forEach(type => (openMarkups[type] = -1));
+        type.forEach(type => {
+          let openMarkupIdx = openMarkups[type];
+
+          if (openMarkupIdx !== -1) {
+            tokens[openMarkupIdx] = type;
+            openMarkups[type] = -1
+          }
+        });
       } else {
-        openMarkups[type] = -1;
+        let openMarkupIdx = openMarkups[type];
+
+        if (openMarkupIdx !== -1) {
+          tokens[openMarkupIdx] = type;
+          openMarkups[type] = -1
+        }
       }
     }
   }
@@ -174,6 +187,7 @@ export default function parse(text: string) {
   let nodes = [];
 
   let currentNode: WriteDownNode;
+  let openMarkups: boolean[] = new Array(OPEN_MARKUP_TOKEN_COUNT).fill(false);
 
   for (let i = 0; i < tokens.length; i += 3) {
     let currentTokenType = tokens[i];
@@ -188,10 +202,10 @@ export default function parse(text: string) {
     let nextTokenStart = tokens[i + 4];
 
     let nextBegin = nextTokenType !== undefined ? nextTokenStart : text.length;
+    let tokenText = text.slice(currentTokenStart, currentTokenEnd + 1);
     let betweenText = text.slice(currentTokenEnd + 1, nextBegin);
 
     if (SECTION_TOKENS.has(currentTokenType)) {
-      let tokenText = text.slice(currentTokenStart, currentTokenEnd + 1);
 
       let indent = tokenText.includes('\t') ? tokenText.match(/\t/g)!.length : 0;
 
@@ -226,12 +240,29 @@ export default function parse(text: string) {
       }
 
       nodes.push(currentNode);
-    } else {
-      currentNode.content.push(currentToken);
+    } else if (currentTokenType in OPEN_MARKUP_TOKENS) {
+      if (openMarkups[currentTokenType] === false) {
+        openMarkups[currentTokenType] = true;
+
+        currentNode!.ops.push(OpCode.OPEN, currentTokenType);
+      } else {
+        openMarkups[currentTokenType] = false;
+
+        currentNode!.ops.push(OpCode.CLOSE, currentTokenType);
+
+        let value = tokenText.match(/\((.*)\)/);
+
+        if (value !== null && value[1].length > 0) {
+          currentNode!.ops.push(OpCode.VALUE);
+          currentNode!.values.push(value[1]);
+        }
+      }
     }
 
     if (betweenText.length > 0) {
-      currentNode.content.push(betweenText);
+      debugger
+      currentNode!.ops.push(OpCode.APPEND);
+      currentNode!.values.push(betweenText);
     }
 
     // let currentItem = { text: '', open: [], close: [] };

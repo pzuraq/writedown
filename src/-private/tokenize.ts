@@ -205,11 +205,13 @@ trie.add(':', TokenType.COLOR);
 trie.add(':\\(\\d\\d*\\)', TokenType.COLOR_CLOSE);
 
 trie.add('#\\S\\S*', TokenType.TAG);
-trie.add('#', TokenType.TAG_CLOSE);
+trie.add('\\S#', TokenType.TAG_CLOSE);
 
 trie.add('\\\\.', TokenType.ESCAPED);
 
 function optimize() {}
+
+let foo;
 
 export default function tokenize(text: string) {
   // Add an extra newline to match patterns that should also match $
@@ -217,6 +219,11 @@ export default function tokenize(text: string) {
 
   let tokens = [];
 
+  // Chrome does something that causes the function to deopt badly when used in
+  // event handlers (stuttering minor GCs). Calling a function, /any/ function,
+  // right here after we've created the tokens array seems to prevent this from
+  // happening. Dark Javascript magic here, beware, do not use this in  your
+  // app ever, it'll probably be fixed eventually.
   optimize(); // ????????
 
   for (let i = 0; i < text.length - 1; i++) {
@@ -265,8 +272,6 @@ export default function tokenize(text: string) {
         let acceptNode = currentNode[ACCEPT] as AcceptNode;
         acceptValue = acceptNode.value;
         acceptOffset = currentOffset - acceptNode.offset;
-
-        break;
       }
 
       currentOffset++;
