@@ -33,6 +33,8 @@ export const enum TokenType {
 
   ESCAPED,
 
+  EOF,
+
   _LAST,
 }
 
@@ -209,34 +211,36 @@ trie.add('\\S#', TokenType.TAG_CLOSE);
 
 trie.add('\\\\.', TokenType.ESCAPED);
 
-function optimize() {}
-
-let foo;
-
 export default function tokenize(text: string) {
   // Add an extra newline to match patterns that should also match $
   text = text + '\n';
 
-  let tokens = [];
+  // The tokens array consists of triplets of integers
+  //
+  // 1. token type
+  // 2. token start
+  // 3. token end
+  //
+  // We size the array in advance and grow it as needed, hoping that the overall
+  // number of tokens will be relatively small compared to the text. The array
+  // should always be a multiple of 3 in length + 1. The extra number is to hold
+  // the terminator (-1) should we completely fill the rest of the array. The
+  // terminator may not be the last item in the array, but it will always exist
+  // and this makes it easier for the parser to operate on the tokens.
+  let tokens = new Int32Array(Math.ceil(text.length / 10) * 3);
+  let tokenIndex = 0;
 
-  // Chrome does something that causes the function to deopt badly when used in
-  // event handlers (stuttering minor GCs). Calling a function, /any/ function,
-  // right here after we've created the tokens array seems to prevent this from
-  // happening. Dark Javascript magic here, beware, do not use this in  your
-  // app ever, it'll probably be fixed eventually.
-  optimize(); // ????????
-
-  for (let i = 0; i < text.length - 1; i++) {
+  for (let mainOffset = 0; mainOffset < text.length - 1; mainOffset++) {
     let currentNode = trie.root;
 
     let acceptValue;
-    let acceptOffset = i;
+    let acceptOffset = mainOffset;
 
-    let currentOffset = i;
+    let tokenOffset = mainOffset;
     let nextNode;
 
-    while (currentOffset < text.length) {
-      let currentChar = text[currentOffset];
+    while (tokenOffset < text.length) {
+      let currentChar = text[tokenOffset];
 
       nextNode = currentNode[currentChar];
 
@@ -271,20 +275,34 @@ export default function tokenize(text: string) {
       if (currentNode[ACCEPT] !== undefined) {
         let acceptNode = currentNode[ACCEPT] as AcceptNode;
         acceptValue = acceptNode.value;
-        acceptOffset = currentOffset - acceptNode.offset;
+        acceptOffset = tokenOffset - acceptNode.offset;
       }
 
-      currentOffset++;
+      tokenOffset++;
     }
 
     if (acceptValue !== undefined) {
       if (acceptValue !== TokenType.ESCAPED) {
-        tokens.push(acceptValue, i, acceptOffset);
+        tokens[tokenIndex] = acceptValue;
+        tokens[tokenIndex + 1] = mainOffset;
+        tokens[tokenIndex + 2] = acceptOffset;
+
+        tokenIndex += 3;
+
+        if (tokenIndex === tokens.length) {
+          let newTokens = new Int32Array(tokens.length * 2);
+          newTokens.set(tokens);
+          tokens = newTokens;
+        }
       }
 
-      i = acceptOffset;
+      mainOffset = acceptOffset;
     }
   }
+
+  tokens[tokenIndex] = TokenType.EOF;
+  tokens[tokenIndex + 1] = text.length - 1;
+  tokens[tokenIndex + 2] = text.length - 1;
 
   return tokens;
 }

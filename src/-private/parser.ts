@@ -2,7 +2,7 @@ import tokenize, { TokenType } from './tokenize';
 
 // export { SECTION, MARKUP };
 
-type WriteDownNode = {
+export type WriteDownNode = {
   type: TokenType;
   indent: number;
   value: any;
@@ -64,13 +64,13 @@ const OPEN_MARKUP_TOKEN_COUNT = Object.keys(OPEN_MARKUP_TOKENS).length;
 
 const SKIP = -1;
 
-function processCodeTokens(tokens: Array<TokenType | number>) {
+function processCodeTokens(tokens: Int32Array) {
   let openPreIdx = -1;
   let openCodeIdx = -1;
 
-  let filteredTokens = [];
+  let i = 0;
 
-  for (let i = 0; i < tokens.length; i += 3) {
+  while (tokens[i] !== TokenType.EOF) {
     let tokenType = tokens[0];
 
     if (tokenType === TokenType.PRE_LANG) {
@@ -95,6 +95,8 @@ function processCodeTokens(tokens: Array<TokenType | number>) {
         openCodeIdx = -1;
       }
     }
+
+    i += 3;
   }
 
   if (openCodeIdx !== -1) {
@@ -106,10 +108,12 @@ function processCodeTokens(tokens: Array<TokenType | number>) {
   }
 }
 
-function processMarkupTokens(tokens: Array<TokenType | number>) {
-  let openMarkups: number[] = new Array(OPEN_MARKUP_TOKEN_COUNT).fill(-1);
+function processMarkupTokens(tokens: Int32Array) {
+  let openMarkups: Map<number, number> = new Map();
 
-  for (let i = 0; i < tokens.length; i += 3) {
+  let i = 0;
+
+  while (tokens[i] !== TokenType.EOF) {
     let tokenType = tokens[i];
 
     if (tokenType === SKIP) {
@@ -118,13 +122,8 @@ function processMarkupTokens(tokens: Array<TokenType | number>) {
 
     if (SECTION_TOKENS.has(tokenType)) {
       // Clear the stack, markups can't cross section boundaries
-      openMarkups.forEach((index, markupType) => {
-        if (index !== -1) {
-          tokens[index] = SKIP;
-        }
-
-        openMarkups[markupType] = -1;
-      });
+      openMarkups.forEach(index => (tokens[index] = SKIP));
+      openMarkups.clear();
     }
 
     if (tokenType === TokenType.PRE || tokenType === TokenType.PRE_LANG) {
@@ -132,14 +131,15 @@ function processMarkupTokens(tokens: Array<TokenType | number>) {
         i += 3;
         tokenType = tokens[i];
 
-        // Skip the last PRE tag
-        tokens[i] = SKIP;
-
         if (tokenType === TokenType.PRE) {
           break;
         }
+
+        tokens[i] = SKIP;
       }
-    } else if (tokenType === TokenType.CODE) {
+    }
+
+    if (tokenType === TokenType.CODE) {
       while (true) {
         i += 3;
         tokenType = tokens[i];
@@ -150,30 +150,39 @@ function processMarkupTokens(tokens: Array<TokenType | number>) {
 
         tokens[i] = SKIP;
       }
-    } else if (tokenType in OPEN_MARKUP_TOKENS && openMarkups[tokenType] !== -1) {
-      openMarkups[tokenType] === i;
+    }
+
+    if (tokenType === TokenType.LINK && openMarkups.has(tokenType)) {
+      tokens[openMarkups.get(tokenType)!] = SKIP;
+      openMarkups.delete(tokenType);
+    }
+
+    if (tokenType in OPEN_MARKUP_TOKENS && !openMarkups.has(tokenType)) {
+      openMarkups.set(tokenType, i);
     } else if (tokenType in CLOSE_MARKUP_TOKENS) {
       let type = CLOSE_MARKUP_TOKENS[tokenType];
 
       if (Array.isArray(type)) {
         type.forEach(type => {
-          let openMarkupIdx = openMarkups[type];
-
-          if (openMarkupIdx !== -1) {
-            tokens[openMarkupIdx] = type;
-            openMarkups[type] = -1
+          if (openMarkups.has(type)) {
+            tokens[i] = type;
+            openMarkups.delete(type);
           }
         });
       } else {
-        let openMarkupIdx = openMarkups[type];
-
-        if (openMarkupIdx !== -1) {
-          tokens[openMarkupIdx] = type;
-          openMarkups[type] = -1
+        if (openMarkups.has(type)) {
+          tokens[i] = type;
+          openMarkups.delete(type);
         }
       }
     }
+
+    i += 3;
   }
+
+  // Clear the stack, markups can't cross section boundaries
+  openMarkups.forEach(index => (tokens[index] = SKIP));
+  openMarkups.clear();
 }
 
 export default function parse(text: string) {
@@ -181,72 +190,94 @@ export default function parse(text: string) {
 
   let tokens = tokenize(text);
 
+  console.log(tokens);
+
   processCodeTokens(tokens);
+
+  console.log(tokens);
+
   processMarkupTokens(tokens);
+
+  console.log(tokens);
 
   let nodes = [];
 
   let currentNode: WriteDownNode;
-  let openMarkups: boolean[] = new Array(OPEN_MARKUP_TOKEN_COUNT).fill(false);
+  let openMarkups: Set<number> = new Set();
+  let openSections: Set<number> = new Set();
 
-  for (let i = 0; i < tokens.length; i += 3) {
-    let currentTokenType = tokens[i];
-    let currentTokenStart = tokens[i + 1];
-    let currentTokenEnd = tokens[i + 2];
+  let currentIndex = 0;
+  let lastTokenEnd;
+
+  while (true) {
+    let currentTokenType = tokens[currentIndex];
+    let currentTokenStart = tokens[currentIndex + 1];
+    let currentTokenEnd = tokens[currentIndex + 2];
+
+    currentIndex += 3;
 
     if (currentTokenType === SKIP) {
       continue;
+    } else if (lastTokenEnd !== undefined && lastTokenEnd + 1 !== currentTokenStart) {
+      let buffer = text.slice(lastTokenEnd + 1, currentTokenStart);
+
+      currentNode!.ops.push(OpCode.APPEND);
+      currentNode!.values.push(buffer);
     }
 
-    let nextTokenType = tokens[i + 3];
-    let nextTokenStart = tokens[i + 4];
+    if (currentTokenType === TokenType.EOF) {
+      break;
+    }
 
-    let nextBegin = nextTokenType !== undefined ? nextTokenStart : text.length;
+    lastTokenEnd = currentTokenEnd;
+
     let tokenText = text.slice(currentTokenStart, currentTokenEnd + 1);
-    let betweenText = text.slice(currentTokenEnd + 1, nextBegin);
 
     if (SECTION_TOKENS.has(currentTokenType)) {
+      if (openSections.has(currentTokenType)) {
+        openSections.delete(currentTokenType);
+      } else {
+        let indent = tokenText.includes('\t') ? tokenText.match(/\t/g)!.length : 0;
 
-      let indent = tokenText.includes('\t') ? tokenText.match(/\t/g)!.length : 0;
+        currentNode = {
+          type: currentTokenType,
+          value: null,
+          indent,
+          ops: [],
+          values: [],
+        };
 
-      currentNode = {
-        type: currentTokenType,
-        value: null,
-        indent,
-        ops: [],
-        values: [],
-      };
+        if (currentNode.type === TokenType.HEADER) {
+          let headerLevel = tokenText.match(/#/g)!.length;
 
-      if (currentNode.type === TokenType.HEADER) {
-        let headerLevel = tokenText.match(/#/g)!.length;
-
-        if (headerLevel > 6) {
-          // Don't allow headers greater than 6, convert to paragraph
-          currentNode.type = TokenType.PARAGRAPH;
-          betweenText = tokenText + betweenText;
-        } else {
-          currentNode.value = headerLevel;
+          if (headerLevel > 6) {
+            // Don't allow headers greater than 6, convert to paragraph
+            currentNode.type = TokenType.PARAGRAPH;
+            lastTokenEnd -= tokenText.length;
+          } else {
+            currentNode.value = headerLevel;
+          }
         }
-      }
 
-      if (currentNode.type === TokenType.ORDERED) {
-        currentNode.value = tokenText.match(/\d+/)![0];
-      }
+        if (currentNode.type === TokenType.ORDERED) {
+          currentNode.value = tokenText.match(/\d+/)![0];
+        }
 
-      if (currentNode.type === TokenType.PRE || currentNode.type === TokenType.PRE_LANG) {
-        currentNode.type = TokenType.PRE;
-        currentNode.value = tokenText.match(/```(.*)/)![1];
-        betweenText = betweenText.substr(0, betweenText.length - 4);
-      }
+        if (currentNode.type === TokenType.PRE || currentNode.type === TokenType.PRE_LANG) {
+          currentNode.type = TokenType.PRE;
+          currentNode.value = tokenText.match(/```(.*)/)![1];
+          openSections.add(TokenType.PRE);
+        }
 
-      nodes.push(currentNode);
+        nodes.push(currentNode);
+      }
     } else if (currentTokenType in OPEN_MARKUP_TOKENS) {
-      if (openMarkups[currentTokenType] === false) {
-        openMarkups[currentTokenType] = true;
+      if (!openMarkups.has(currentTokenType)) {
+        openMarkups.add(currentTokenType);
 
         currentNode!.ops.push(OpCode.OPEN, currentTokenType);
       } else {
-        openMarkups[currentTokenType] = false;
+        openMarkups.delete(currentTokenType);
 
         currentNode!.ops.push(OpCode.CLOSE, currentTokenType);
 
@@ -258,54 +289,7 @@ export default function parse(text: string) {
         }
       }
     }
-
-    if (betweenText.length > 0) {
-      debugger
-      currentNode!.ops.push(OpCode.APPEND);
-      currentNode!.values.push(betweenText);
-    }
-
-    // let currentItem = { text: '', open: [], close: [] };
-
-    // while (!SECTION_CODES.has(tokens[i + 1]) {
-    //   let metaItem = meta[i];
-
-    //   if (metaItem) {
-    //     if (SECTION_CODES.has(metaItem.type)) {
-    //       break;
-    //     }
-
-    //     if (metaItem.isOpen) {
-    //       if (currentItem.text.length > 0 || currentItem.close.length) {
-    //         currentNode.content.push(currentItem);
-    //         currentItem = { text: '', open: [], close: [] };
-    //       }
-
-    //       let { type, value } = metaItem;
-
-    //       currentItem.open.push({ type, value });
-    //     } else if (metaItem.isClose) {
-    //       let { type, value } = metaItem;
-
-    //       currentItem.close.push({ type, value });
-    //     }
-
-    //     i = metaItem.end + 1;
-
-    //     continue;
-    //   }
-
-    //   if (currentItem.close.length) {
-    //     currentNode.content.push(currentItem);
-    //     currentItem = { text: '', open: [], close: [] };
-    //   }
-
-    //   currentItem.text += text[i];
-    //   i++;
-    // }
   }
-
-  // console.log(tokens, nodes);
 
   return nodes;
 }
